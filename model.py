@@ -2,6 +2,12 @@ import torch
 import torch.nn 
 import math
 
+# pre Layer Normalization: Norm ->Sublayer->Add
+# post Layer Normalization: Sublayer->Add->Norm
+# In the Post LN the scale of the hidden states can grow rapidly. This often makes the model very sensitive to initialization.
+# In the Pre LN, Since the input to the sublayer is normalized, the gradients tend to be better behaved during backpropagation.
+
+
 # d_model: dimension of the embedding vector
 class InputEmbeddings(nn.Module):
     def __init__(self, d_model: int, vocab_size: int):
@@ -42,11 +48,11 @@ class PositionalEncoding(nn.Module):
 # make sure values dont explode or vanish, keep them reasonable 
 class LayerNormalization(nn.Module):
 
-    def __init__(self, eps:float=10**-6) -> None:
+    def __init__(self, features: int, eps:float=10**-6) -> None:
         super().__init__()
         self.eps = eps
-        self.alpha = nn.Parameter(torch.ones(1)) # alpha is a learnable parameter
-        self.bias = nn.Parameter(torch.zeros(1)) # bias is a learnable parameter
+        self.alpha = nn.Parameter(torch.ones(features)) # alpha is a learnable parameter
+        self.bias = nn.Parameter(torch.zeros(features)) # bias is a learnable parameter
 
     def forward(self, x):
         # x: (batch, seq_len, hidden_size)
@@ -74,10 +80,10 @@ class FeedForwardBlock(nn.Module):
 # skipping part 
 class ResidualConnection(nn.Module):
     
-        def __init__(self, dropout: float) -> None:
+        def __init__(self, features: int, dropout: float) -> None:
             super().__init__()
             self.dropout = nn.Dropout(dropout)
-            self.norm = LayerNormalization()
+            self.norm = LayerNormalization(features)
     
         def forward(self, x, sublayer):
             return x + self.dropout(sublayer(self.norm(x)))
@@ -156,15 +162,16 @@ class EncoderBlock(nn.Module):
         x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, src_mask))
         x = self.residual_connections[1](x, self.feed_forward_block)
         return x
+    
 
 # high-level container that stacks multiple encoder blocks together and apply layer normalization at the end
 # (common practice)
 class Encoder(nn.Module):
 
-    def __init__(self, layers: nn.ModuleList) -> None:
+    def __init__(self, features: int, layers: nn.ModuleList) -> None:
         super().__init__()
         self.layers = layers
-        self.norm = LayerNormalization()
+        self.norm = LayerNormalization(features)
 
     def forward(self, x, mask):
         for layer in self.layers:
@@ -177,12 +184,12 @@ class Encoder(nn.Module):
 # target mask -> input of the decoder block, to prevent attending to future tokens
 class DecoderBlock(nn.Module):
 
-    def __init__(self, self_attention_block: MultiHeadAttentionBlock, cross_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+    def __init__(self, features: int, self_attention_block: MultiHeadAttentionBlock, cross_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
         super().__init__()
         self.self_attention_block = self_attention_block
         self.cross_attention_block = cross_attention_block
         self.feed_forward_block = feed_forward_block
-        self.residual_connections = nn.ModuleList([ResidualConnection( dropout) for _ in range(3)])
+        self.residual_connections = nn.ModuleList([ResidualConnection(features, dropout) for _ in range(3)])
 
     def forward(self, x, encoder_output, src_mask, tgt_mask):
         x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, tgt_mask))
@@ -192,12 +199,29 @@ class DecoderBlock(nn.Module):
     
 class Decoder(nn.Module):
 
-    def __init__(self, layers: nn.ModuleList) -> None:
+    def __init__(self, features: int, layers: nn.ModuleList) -> None:
         super().__init__()
         self.layers = layers
-        self.norm = LayerNormalization()
+        self.norm = LayerNormalization(features)
 
     def forward(self, x, encoder_output, src_mask, tgt_mask):
         for layer in self.layers:
             x = layer(x, encoder_output, src_mask, tgt_mask)
         return self.norm(x)
+
+
+# we need Linear layer at the end to convert the output of the decoder to the size of the vocabulary for prediction
+# its projecting the embedding into the vocabulary
+class ProjectionLayer(nn.Module):
+
+    def __init__(self, d_model, vocab_size) -> None:
+        super().__init__()
+        self.proj = nn.Linear(d_model, vocab_size)
+
+    def forward(self, x) -> None:
+        # (batch, seq_len, d_model) --> (batch, seq_len, vocab_size)
+        return self.proj(x)
+
+# we may not need softmax to get probabilities
+# we will omit it from the model architecture
+
