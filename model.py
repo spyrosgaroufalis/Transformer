@@ -121,6 +121,22 @@ class MultiHeadAttentionBlock(nn.Module):
         # return attention scores which can be used for visualization
         return (attention_scores @ value), attention_scores
 
+    # @staticmethod
+    # def attention(query, key, value, mask, dropout_p, is_causal=False):
+    #     # query, key, value are already (batch, h, seq_len, d_k)
+        
+    #     # If a mask is provided (like a padding mask), we pass it.
+    #     # If is_causal is True, it applies the triangular mask.
+    #     out = F.scaled_dot_product_attention(
+    #         query, key, value, 
+    #         attn_mask=mask, 
+    #         dropout_p=dropout_p, 
+    #         is_causal=is_causal
+    #     )
+        
+    #     return out, None # Returning None because Flash Attention doesn't return scores
+
+
     def forward(self, q, k, v, mask):
         query = self.w_q(q) # (batch, seq_len, d_model) --> (batch, seq_len, d_model)
         key = self.w_k(k) # (batch, seq_len, d_model) --> (batch, seq_len, d_model)
@@ -141,6 +157,27 @@ class MultiHeadAttentionBlock(nn.Module):
         # Multiply by Wo
         # (batch, seq_len, d_model) --> (batch, seq_len, d_model)  
         return self.w_o(x)
+
+
+    # def forward(self, q, k, v, mask):
+    #     query = self.w_q(q) # (batch, seq_len, d_model) --> (batch, seq_len, d_model)
+    #     key = self.w_k(k) # (batch, seq_len, d_model) --> (batch, seq_len, d_model)
+    #     value = self.w_v(v) # (batch, seq_len, d_model) --> (batch, seq_len, d_model)
+
+    #     query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2)
+    #     key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1, 2)
+    #     value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
+
+    #     x, _ = MultiHeadAttentionBlock.attention(
+    #         query, key, value, 
+    #         mask, 
+    #         dropout_p=self.dropout.p if self.training else 0,
+    #         is_causal=False # Set based on whether it's self or cross attention
+    #     )
+
+    #     x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
+
+    #     return self.w_o(x)
 
 
 # we need to stack multpl encoder blocks and 
